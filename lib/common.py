@@ -65,6 +65,7 @@ class SPP(nn.Module):
 
 class Focus(nn.Module):
     # TODO: wth is this module doing
+    #       i know what stuff this dude do but i just down know why
     def __init__(self, c1, c2, k=1, s=1, p=None, g=1, act=True):
         super().__init__()
         self.conv = Conv(c1 * 4, c2, k, s, p, g, act)
@@ -72,7 +73,7 @@ class Focus(nn.Module):
     def forward(self, x):
         return self.conv(torch.cat([x[..., ::2, ::2], x[..., 1::2, ::2], x[..., ::2, 1::2], x[..., 1::2, 1::2]], 1))
 
-class Concat(nn.modules):
+class Concat(nn.Module):
     def __init__(self, dimension=1):
         super().__init__()
         self.d = dimension
