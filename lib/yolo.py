@@ -42,6 +42,7 @@ class Detect(nn.Module):
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)
         self.inplace = inplace
         # TODO: idn what the hell is this fucking argument is setting for
+        # NOTE: this is used for the pose object
         self.num_coords = num_coords
     
     def forward(self, x):
@@ -70,7 +71,11 @@ class Detect(nn.Module):
 
                     if hasattr(self, 'num_coords') and self.num_coords:
                         # TODO: what the hell is this shit?
-                        pass
+                        # NOTE: transform the coordinations of the pose object
+                        # TODO: but i still down totally understand the detail of the tensor operation
+                        y[..., -self.num_coords:] = y[..., -self.num_coords:] * 4. - 2
+                        y[..., -self.num_coords:] *= self.anchor_grid[i].repeat((1, 1, 1, 1, self.num_coords // 2))
+                        y[..., -self.num_coords:] += (self.grid[i] * self.stride[i]).repeat((1, 1, 1, 1, self.num_coords // 2))
                 else:
                     xy = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]
                     wh = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]
@@ -206,6 +211,10 @@ class Model(nn.Module):
     def _initialize_biases(self, cf=None):
         pass
     
+    def _descale_pred(self, p, flips, scale, img_size, kp_flip):
+        # TODO: finish this code
+        return p
+
     def info(self, verbose=False, img_size=640):
         model_info(self, verbose, img_size)
 

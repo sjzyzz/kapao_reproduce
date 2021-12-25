@@ -10,7 +10,6 @@ from utils.general import scale_coords
 from val import run_nms, post_process_batch
 
 from lib.torch_utils import select_device
-# from experimental import initialize_model_and_load_weight
 from lib.general import check_img_size
 from lib.datasets import LoadImages
 from lib.yolo import Model
@@ -41,7 +40,7 @@ if __name__ == "__main__":
     parser.add_argument('--conf-thres-kp-person', type=float, default=0.2)
     parser.add_argument('--overwrite-tol', type=int, default=25)
     args = parser.parse_args()
-    print(args)
+    # print(args)
 
     # use yaml file to save the info of the data
     with open(args.data) as f:
@@ -73,19 +72,20 @@ if __name__ == "__main__":
     (_, img, img0) = next(iter(dataset))
     img = img.to(device)
     
-    out = model(img, augment=True, kp_flip=data['kp_flip'], scales=data['scales'], flips=data['flips'])[0]
+    # TODO: did not use augment here, just add it later
+    out = model(img, augment=False, kp_flip=data['kp_flip'], scales=data['scales'], flips=data['flips'])[0]
 
     bbox_dets, kp_dets = run_nms(data, out)
 
     if args.bbox:
-        # the index here is wire
-        bboxes = scale_coords(img.shape[2:], bbox_dets[0][:, :4], img0.shape[:2]).round().cpu().numpy()
+        # TODO:the index here is wire
+        bboxes = scale_coords(img.shape[2:], bbox_dets[0][:, :4], img0.shape[:2]).round().detach().cpu().numpy()
         for x1, y1, x2, y2 in bboxes:
             cv2.rectangle(img0, (int(x1), int(y1)), (int(x2), int(y2)), args.color_pose, thickness=args.line_thick)
     
     # i think this is the fusion of pose object and kp object
     # but the interface is really ugly lol
-    _, poses, _, _, _ = post_process_batch(data, img, [], [[img0.shape[:2]]], bbox_dets, kp_dets)
+    _, poses, _, _, _ = post_process_batch(data, img, [], [[img0.shape[:2]]], [x.detach() for x in bbox_dets], [x.detach() for x in kp_dets])
     if args.pose:
         for pose in poses:
             for seg in data['segments'].values():
