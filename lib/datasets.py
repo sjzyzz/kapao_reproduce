@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 import torch
 
-from augmentations import letterbox
+from lib.augmentations import letterbox
 
 class LoadImages:
     def __init__(self, path, img_size=640, stride=32, auto=True):

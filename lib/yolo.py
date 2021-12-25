@@ -9,8 +9,9 @@ from utils.torch_utils import time_sync, scale_img, initialize_weights
 from utils.plots import feature_visualization
 from utils.autoanchor import check_anchor_order
 
-from general import make_divisible
-from common import *
+from lib.torch_utils import model_info
+from lib.general import make_divisible
+from lib.common import *
 
 
 try:
@@ -19,12 +20,13 @@ except ImportError:
     thop = None
 
 LOGGER = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 class Detect(nn.Module):
     stride=None
 
     def __init__(self, nc=80, anchors=(), ch=(), inplace=True, num_coords=0):
-        super.__init__()
+        super().__init__()
         self.nc = nc # number of classes
         self.no = nc + 5 # number of outputs per anchor
         self.nl = len(anchors) # number of layers
@@ -102,10 +104,15 @@ class Model(nn.Module):
         
         # define model
         # TODO: what the hell is this code fucking doing, why not just get the channel lmao
+        # NOTE: basically, if there is no attribute `ch` in `self.yaml`, it will just use `ch` and set the `self.yaml`
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)
+        # NOTE: finally!!! i got that fucking point,
+        #       because `self.nc` will be used to set `nc` which means number of output,
+        #       so if there is `num_coords`, we must reset the `nc`
         if nc + num_coords and nc + num_coords != self.yaml['nc']:
             # TODO: idn why there is an error lmao
-            # LOGGER.info(f'Overriding model.yaml nc={self.yaml['nc']} with nc={nc + num_coords}')
+            # NOTE: lol i know this fuck hahaha, just use '' neatly
+            LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc + num_coords}")
             self.yaml['nc'] = nc + num_coords
         if anchors:
             LOGGER.info(f'Overriding model.yaml anchors with anchors={anchors}')
@@ -113,16 +120,20 @@ class Model(nn.Module):
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])
         self.names = [str(i) for i in range(self.yaml['nc'])]
         self.inplace = self.yaml.get('inplace', True)
+        self.num_coords = num_coords
         # TODO: idn what `autobalance` means
         if autobalance:
             self.loss_coeffs = nn.parameter(torch.zeros(2))
 
         # build strides, anchors
         m = self.model[-1] # you get Detect() now
+        # print(m)
         if isinstance(m, Detect):
             # TODO: what the hell is this doing?
+            # NOTE: just got the stride and maybe it will be useful latter
             s = 256
             m.inplace = self.inplace
+            # print(ch)
             m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])
             m.anchors /= m.stride.view(-1, 1, 1)
             check_anchor_order(m)
@@ -130,14 +141,15 @@ class Model(nn.Module):
             m.num_coords = self.num_coords
             m.nc = nc
             self._initialize_biases()
+            # print(' i have finished the operation in this branch')
         
         initialize_weights(self)
         self.info()
         LOGGER.info('')
 
-    def forward(self, x, augment=False, profile=False, visualiza=False, kp_flip=None, scales=[0.5, 1, 2], flip=[None, 3, None]):
+    def forward(self, x, augment=False, profile=False, visualiza=False, kp_flip=None, scales=[0.5, 1, 2], flips=[None, 3, None]):
         if augment:
-            return self.forward_augment(x, kp_flip, s=scales, f=flip)
+            return self.forward_augment(x, kp_flip, s=scales, f=flips)
         return self.forward_once(x, profile, visualiza)
     
     def forward_augment(self, x, kp_flip, s=[0.5, 1, 2], f=[None, 3, None]):
@@ -191,11 +203,18 @@ class Model(nn.Module):
             LOGGER.info('%.1fms total' % sum(dt))
         return x
     
+    def _initialize_biases(self, cf=None):
+        pass
+    
+    def info(self, verbose=False, img_size=640):
+        model_info(self, verbose, img_size)
+
+
 def parse_model(d, ch):
     '''
     Given the model_dict and input_channels, return the full model
     '''
-    LOGGER.info('\n%3s%18s%3s%10s   %-40s%-30s' % ('', 'from', 'n', 'param', 'module', 'arguments'))
+    LOGGER.info('%3s%18s%3s%10s   %-40s%-30s' % ('', 'from', 'n', 'param', 'module', 'arguments'))
     # TODO: idn why setting `depth_multiple` and `width_multiple`
     anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple']
     # TODO: i think the last `anchors` should change to `len(anchors) // 2`
@@ -216,6 +235,7 @@ def parse_model(d, ch):
         n = n_ = max(round(n * gd), 1) if n > 1 else n
         if m in [Conv, Bottleneck, SPP, Focus, C3]:
             c1, c2 = ch[f], args[0]
+            # print(c1, c2)
             if c2 != no:
                 # TODO: idn why this code
                 c2 = make_divisible(c2 * gw, 8)
@@ -224,25 +244,27 @@ def parse_model(d, ch):
             if m in [C3]:
                 args.insert(2, n)
                 n = 1
-            elif m is nn.BatchNorm2d:
-                args = [ch[f]]
-            elif m is Concat:
-                c2 = sum([ch[x] for x in f])
-            elif m is Detect:
-                args.append([ch[x] for x in f])
-                if isinstance(args[1], int):
-                    args[1] = [list(range(args[1] * 2))] * len(f)
-            else:
-                c2 = ch[f]
+        elif m is nn.BatchNorm2d:
+            args = [ch[f]]
+        elif m is Concat:
+            c2 = sum([ch[x] for x in f])
+        elif m is Detect:
+            args.append([ch[x] for x in f])
+            if isinstance(args[1], int):
+                args[1] = [list(range(args[1] * 2))] * len(f)
+        else:
+            c2 = ch[f]
             
-            m_ = nn.Sequential(*[m(*args) for _ in range(n)]) if 1 < n else m(*args)
-            t = str(m)[8:-2].replace('__main__', '')
-            np = sum([x.numel() for x in m_.parameters()])
-            m_.i, m_.f, m_.type, m_.np = i, f, t, np
-            LOGGER.info('%3s%18s%3s%10.0f   %-40s%-30s' % (i, f, n_, np, t, args))
-            save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)
-            layers.append(m_)
-            if i == 0:
-                ch = []
-            ch.append(c2)
-        return nn.Sequential(*layers), sorted(save)
+        m_ = nn.Sequential(*[m(*args) for _ in range(n)]) if 1 < n else m(*args)
+        t = str(m)[8:-2].replace('__main__', '')
+        np = sum([x.numel() for x in m_.parameters()])
+        m_.i, m_.f, m_.type, m_.np = i, f, t, np
+        LOGGER.info('%3s%18s%3s%10.0f   %-40s%-30s' % (i, f, n_, np, t, args))
+        save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)
+        layers.append(m_)
+        if i == 0:
+            ch = []
+        ch.append(c2)
+        # print(ch)
+    # print(ch)
+    return nn.Sequential(*layers), sorted(save)

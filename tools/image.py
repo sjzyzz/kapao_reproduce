@@ -9,15 +9,17 @@ import _init_path
 from utils.general import scale_coords
 from val import run_nms, post_process_batch
 
-from torch_utils import select_device
-from experimental import attempt_load
-from general import check_img_size
-from datasets import LoadImages
-
+from lib.torch_utils import select_device
+# from experimental import initialize_model_and_load_weight
+from lib.general import check_img_size
+from lib.datasets import LoadImages
+from lib.yolo import Model
+from lib.experimental import load_weights
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # get lots of arguments
+    parser.add_argument('--cfg', type=str, default='cfg/yolov5s6.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default='data/coco-kp.yaml')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or cpu')
     parser.add_argument('--weights', default='kapao_l_coco.pt')
@@ -58,7 +60,12 @@ if __name__ == "__main__":
     device = select_device(args.device)
     print(f"Using device: {device}")
     # time to get the model lol
-    model = attempt_load(args.weights, map_location=device)
+    # NOTE: basically, in the initialization of model,
+    #       if the `anchors` is specified, the model will use the specified `anchors`,
+    #       or it will use the `anchors` in `cfg` file
+    model = Model(args.cfg, ch=3, nc=data['nc'], anchors=None, num_coords=data['num_coords']).to(device)
+    model = load_weights(args.weights, model, device)
+    model.eval()
     stride = int(model.stride.max())
     img_size = check_img_size(args.img_size, s=stride)
     dataset = LoadImages(args.img_path, img_size=img_size, stride=stride, auto=True)

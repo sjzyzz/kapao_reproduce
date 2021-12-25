@@ -51,7 +51,7 @@ class C3(nn.Module):
 
 class SPP(nn.Module):
     def __init__(self, c1, c2, k=(5, 9, 12)):
-        super.__init__()
+        super().__init__()
         c_ = c1 // 2
         self.cv1 = Conv(c1, c_, 1, 1)
         self.cv2 = Conv(c_ * (len(k) + 1), c2, 1, 1)
