@@ -3,17 +3,15 @@ import os.path as osp
 import yaml
 
 import cv2
-import torch
 
 import _init_path
-from utils.general import scale_coords
-from val import run_nms, post_process_batch
-
 from lib.torch_utils import select_device
 from lib.general import check_img_size
 from lib.datasets import LoadImages
 from lib.yolo import Model
 from lib.experimental import load_weights
+from lib.general import scale_coords
+from val import run_nms#, post_process_batch
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -85,16 +83,16 @@ if __name__ == "__main__":
     
     # i think this is the fusion of pose object and kp object
     # but the interface is really ugly lol
-    _, poses, _, _, _ = post_process_batch(data, img, [], [[img0.shape[:2]]], [x.detach() for x in bbox_dets], [x.detach() for x in kp_dets])
-    if args.pose:
-        for pose in poses:
-            for seg in data['segments'].values():
-                # really don't know what is going on here, that's really normal lol
-                pt1 = (int(pose[seg[0], 0]), int(pose[seg[0], 1]))
-                pt2 = (int(pose[seg[1], 0]), int(pose[seg[1], 1]))
-                cv2.line(img0, pt1, pt2, args.color_pose, args.line_thick)
+    # _, poses, _, _, _ = post_process_batch(data, img, [], [[img0.shape[:2]]], [x.detach() for x in bbox_dets], [x.detach() for x in kp_dets])
+    # if args.pose:
+    #     for pose in poses:
+    #         for seg in data['segments'].values():
+    #             # really don't know what is going on here, that's really normal lol
+    #             pt1 = (int(pose[seg[0], 0]), int(pose[seg[0], 1]))
+    #             pt2 = (int(pose[seg[1], 0]), int(pose[seg[1], 1]))
+    #             cv2.line(img0, pt1, pt2, args.color_pose, args.line_thick)
     
-    # TODO: here comes two method splitext and split, u need to figure out the usage of these two
+    # TODO: here comes two method `splitext` and `split`, u need to figure out the usage of these two
     filename = '{}_{}'.format(osp.splitext(osp.split(args.img_path)[-1])[0], osp.splitext(args.weights)[0])
     if args.bbox:
         filename += '_bbox'
