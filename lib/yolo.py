@@ -145,6 +145,7 @@ class Model(nn.Module):
             LOGGER.info(
                 f'Overriding model.yaml anchors with anchors={anchors}')
             self.yaml['anchors'] = round(anchors)
+        self.nc = nc
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])
         self.names = [str(i) for i in range(self.yaml['nc'])]
         self.inplace = self.yaml.get('inplace', True)
