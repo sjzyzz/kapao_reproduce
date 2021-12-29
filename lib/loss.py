@@ -20,9 +20,11 @@ class MyComputeLoss:
         h = model.hyp
 
         BCEcls = nn.BCEWithLogitsLoss(
-            pos_weight=torch.tensor([h['cls_pw']], device=device))
+            pos_weight=torch.tensor([h['cls_pw']], device=device)
+        )
         BCEobj = nn.BCEWithLogitsLoss(
-            pos_weight=torch.tensor([h['obj_pw']], device=device))
+            pos_weight=torch.tensor([h['obj_pw']], device=device)
+        )
 
         self.cp, self.cn = smooth_BCE(eps=h.get('label_smoothing', 0.0))
 
@@ -39,7 +41,8 @@ class MyComputeLoss:
 
         if self.autobalance:
             self.loss_coeffs = model.module.loss_coeffs if is_parallel(
-                model) else model.loss_coeffs[-1]
+                model
+            ) else model.loss_coeffs[-1]
 
         self.num_coords = num_coords
         self.na = det.na
@@ -56,10 +59,12 @@ class MyComputeLoss:
 
         if all_mine:
             tcls, tbox, tkp, indices, anchors = self.my_build_targets_lol(
-                prediction, targets)
+                prediction, targets
+            )
         else:
             tcls, tbox, tkp, indices, anchors = self.build_targets(
-                prediction, targets)
+                prediction, targets
+            )
 
         device = targets.device
         for i, prediction_i in enumerate(prediction):
@@ -85,13 +90,15 @@ class MyComputeLoss:
 
                 # class
                 if 1 < self.nc:
-                    t = torch.full_like(responsible_prediction_i[:, 5:5 +
-                                                                 self.nc],
-                                        self.cn,
-                                        device=device)
+                    t = torch.full_like(
+                        responsible_prediction_i[:, 5:5 + self.nc],
+                        self.cn,
+                        device=device
+                    )
                     t[range(num_targets), tcls[i]] = self.cp
                     loss_cls += self.BCEcls(
-                        responsible_prediction_i[:, 5:5 + self.nc], t)
+                        responsible_prediction_i[:, 5:5 + self.nc], t
+                    )
 
                 # box
                 loss_box += (1.0 - iou).mean()
@@ -104,14 +111,15 @@ class MyComputeLoss:
                     if len(t_pose_kp_i):
                         p_all_kp_i = responsible_prediction_i[
                             ..., 5 + self.nc:].reshape(
-                                (-1, self.num_coords // 2, 2))
+                                (-1, self.num_coords // 2, 2)
+                            )
                         p_all_kp_i = (p_all_kp_i.sigmoid() * 4 -
                                       2) * anchors[i][:, None, :]
                         p_pose_kp_i = p_all_kp_i[is_pose_mask]
                         # TODO: in fact, idn why `dim=-1`
-                        l2 = torch.linalg.norm(p_pose_kp_i -
-                                               t_pose_kp_i[..., :2],
-                                               dim=-1)
+                        l2 = torch.linalg.norm(
+                            p_pose_kp_i - t_pose_kp_i[..., :2], dim=-1
+                        )
                         loss_kp += torch.mean(l2)
 
             loss_obj_i = self.BCEobj(prediction_i[..., 4], tobj)
@@ -130,28 +138,33 @@ class MyComputeLoss:
         batch_size = prediction[0].shape[0]
 
         return loss * batch_size, torch.cat(
-            (loss_box, loss_obj, loss_cls, loss_kp)).detach()
+            (loss_box, loss_obj, loss_cls, loss_kp)
+        ).detach()
 
     def my_build_targets_lol(self, prediction, targets):
         num_anchor, num_target = self.na, targets.shape[0]
         indices, classes, boxes, anchors, kps = [], [], [], [], []
-        multipier = torch.ones(1 + 1 + 4 + (self.num_coords // 2) * 3 + 1,
-                               device=targets.device)
+        multipier = torch.ones(
+            1 + 1 + 4 + (self.num_coords // 2) * 3 + 1, device=targets.device
+        )
         anchor_idx = torch.arange(num_anchor, device=targets.device).view(
-            num_anchor, 1).repeat(1, num_target)
+            num_anchor, 1
+        ).repeat(1, num_target)
         targets = torch.cat(
-            (targets.repeat(num_anchor, 1, 1), anchor_idx[..., None]), dim=2)
+            (targets.repeat(num_anchor, 1, 1), anchor_idx[..., None]), dim=2
+        )
 
         g = 0.5
         # TODO: why times `g` lol
-        off = torch.tensor([
-            [0, 0],
-            [1, 0],
-            [0, 1],
-            [-1, 0],
-            [0, -1],
-        ],
-                           device=targets.device).float() * g
+        off = torch.tensor(
+            [
+                [0, 0],
+                [1, 0],
+                [0, 1],
+                [-1, 0],
+                [0, -1],
+            ], device=targets.device
+        ).float() * g
         # for each level
         for i in range(self.nl):
             anchors_i = self.anchors[i]
@@ -169,8 +182,8 @@ class MyComputeLoss:
                 # use wh ratio with anchor as a filter
                 ratio = targets_i[:, :, 4:6] / anchors_i[:, None]
                 # TODO: the `max` func here need more consideration
-                ratio_mask = torch.max(
-                    ratio, 1.0 / ratio).max(2)[0] < self.hyp['anchor_t']
+                ratio_mask = torch.max(ratio, 1.0 /
+                                       ratio).max(2)[0] < self.hyp['anchor_t']
                 targets_i = targets_i[ratio_mask]
 
                 # next, we need to find for every target, which grids are responsible
@@ -179,7 +192,8 @@ class MyComputeLoss:
                 left, top = ((gxy % 1. < g) & (1. < gxy)).T
                 right, bottom = ((gxy_inverse % 1. < g) & (1. < gxy_inverse)).T
                 mask = torch.stack(
-                    (torch.ones_like(left), left, top, right, bottom))
+                    (torch.ones_like(left), left, top, right, bottom)
+                )
                 targets_i = targets_i.repeat((5, 1, 1))[mask]
                 # TODO: the index here need more consideration
                 offset = (torch.zeros_like(gxy)[None] + off[:, None])[mask]
@@ -206,8 +220,12 @@ class MyComputeLoss:
                 kps.append(kp)
 
             anchor_idx = targets_i[:, -1].long()
-            indices.append((img_idx, anchor_idx, gj.clamp_(0, wh[1] - 1),
-                            gi.clamp_(0, wh[0] - 1)))
+            indices.append(
+                (
+                    img_idx, anchor_idx, gj.clamp_(0, wh[1] - 1),
+                    gi.clamp_(0, wh[0] - 1)
+                )
+            )
             anchors.append(anchors_i[anchor_idx])
             classes.append(cls)
             boxes.append(torch.cat((gxy - gij, gwh), dim=1))

@@ -1,7 +1,9 @@
+from contextlib import contextmanager
 import logging
 
 import torch
 import torch.nn as nn
+import torch.distributed as dist
 
 LOGGER = logging.getLogger(__name__)
 
@@ -25,15 +27,19 @@ def model_info(model, verbose=False, img_size=640):
     n_p = sum(x.numel() for x in model.parameters())
     n_g = sum(x.numel() for x in model.parameters())
     if verbose:
-        print("%5s %40s %9s %12s %20s %10s % 10s" %
-              ('layer', 'name', 'gradient', 'parameters', 'shape', 'mu',
-               'sigma'))
+        print(
+            "%5s %40s %9s %12s %20s %10s % 10s" %
+            ('layer', 'name', 'gradient', 'parameters', 'shape', 'mu', 'sigma')
+        )
         for i, (name, p) in enumerate(model.named_parameters()):
             # TODO: idn why this operation
             name = name.replace('module_list', '')
-            print("%5g %40s %9s %12g %20s %10.3g %10.3g" %
-                  (i, name, p.requires_grad, p.numel(), list(
-                      p.shape), p.mean(), p.std()))
+            print(
+                "%5g %40s %9s %12g %20s %10.3g %10.3g" % (
+                    i, name, p.requires_grad, p.numel(), list(p.shape),
+                    p.mean(), p.std()
+                )
+            )
 
     # TODO: i just dont want to care FLOPs now lol
     fs = ''
@@ -43,5 +49,22 @@ def model_info(model, verbose=False, img_size=640):
         f'Model Summary: {len(list(model.modules()))} layers, {n_p} parameters, {n_g} gradients{fs}'
     )
 
+
 def is_parallel(model):
-    return type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel)
+    return type(model) in (
+        nn.parallel.DataParallel, nn.parallel.DistributedDataParallel
+    )
+
+
+# TODO: i know that this function just let all other processes wait for the main process,
+#       but idn how it is implemented
+@contextmanager
+def torch_distributed_zero_first(local_rank: int):
+    """
+    Decorator to make all processes in distributed training wait for each local_master to do something
+    """
+    if local_rank not in [-1, 0]:
+        dist.barrier(device_ids=[local_rank])
+    yield
+    if local_rank == 0:
+        dist.barrier(device_ids=[0])
