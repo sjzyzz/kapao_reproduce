@@ -1,6 +1,7 @@
 import logging
 
 import torch
+import torch.nn as nn
 
 LOGGER = logging.getLogger(__name__)
 
@@ -41,3 +42,6 @@ def model_info(model, verbose=False, img_size=640):
     LOGGER.info(
         f'Model Summary: {len(list(model.modules()))} layers, {n_p} parameters, {n_g} gradients{fs}'
     )
+
+def is_parallel(model):
+    return type(model) in (nn.parallel.DataParallel, nn.parallel.DistributedDataParallel)
