@@ -13,6 +13,14 @@ def letterbox(
 ):
     '''
     Resize and pad image while meeting stride-multiple constraints
+    
+    Return:
+        img (np.ndarray): 
+            H x W x 3, where `(H, W) == new_shape`
+        ratio (tuple?): 
+            original width scale factor and height scale factor
+        dw, dh: 
+            the padding
     '''
     shape = img.shape[:2]
     if isinstance(new_shape, int):
@@ -32,8 +40,8 @@ def letterbox(
         # just as below, add border and maintain the width-height ratio
         dw, dh = np.mod(dw, stride), np.mod(dh, stride)
     elif scaleFill:
-        # idn this fucking argument either lmao
-        # lol i know now, this argument means only scale (i.e. without border) to `new_shape`
+        # TODO: idn this fucking argument either lmao
+        # NOTE: lol i know now, this argument means only scale (i.e. without border) to `new_shape`
         dw, dh = 0.0, 0.0
         new_unpad = (new_shape[1], new_shape[0])
         ratio = new_shape[1] / shape[1], new_shape[0] / shape[0]

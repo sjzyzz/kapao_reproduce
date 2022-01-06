@@ -5,6 +5,7 @@ from copy import deepcopy
 import torch
 import torch.nn as nn
 
+from tools import _init_path
 from utils.torch_utils import time_sync, scale_img, initialize_weights
 from utils.plots import feature_visualization
 from utils.autoanchor import check_anchor_order
@@ -38,9 +39,10 @@ class Detect(nn.Module):
         #   the buffer is part of the module which means it will be saved to state_dict
         #   but it is not the module's parameter which means its `require_grad == False`
         self.register_buffer('anchors', a)  # (nl, na, 2)
-        self.register_buffer('anchor_grid',
-                             a.clone().view(self.nl, 1, -1, 1, 1,
-                                            2))  # (nl, 1, na, 1, ,1 ,2)
+        self.register_buffer(
+            'anchor_grid',
+            a.clone().view(self.nl, 1, -1, 1, 1, 2)
+        )  # (nl, 1, na, 1, ,1 ,2)
         self.m = nn.ModuleList(nn.Conv2d(x, self.no * self.na, 1) for x in ch)
         self.inplace = inplace
         # TODO: idn what the hell is this fucking argument is setting for
@@ -53,7 +55,8 @@ class Detect(nn.Module):
             # for each layer(for multi-scale prediction)
             x[i] = self.m[i](x[i])
             bs, _, ny, nx = x[
-                i].shape  # from (bs, 255, 20, 20) -> (bs, num_anchors, h, w, num_output)
+                i
+            ].shape  # from (bs, 255, 20, 20) -> (bs, num_anchors, h, w, num_output)
             x[i] = x[i].view(bs, self.na, self.no, ny,
                              nx).permute(0, 1, 3, 4, 2).contiguous()
 
@@ -81,14 +84,12 @@ class Detect(nn.Module):
                         y[...,
                           -self.num_coords:] = y[...,
                                                  -self.num_coords:] * 4. - 2
-                        y[...,
-                          -self.num_coords:] *= self.anchor_grid[i].repeat(
-                              (1, 1, 1, 1, self.num_coords // 2))
-                        y[...,
-                          -self.num_coords:] += (self.grid[i] *
-                                                 self.stride[i]).repeat(
-                                                     (1, 1, 1, 1,
-                                                      self.num_coords // 2))
+                        y[..., -self.num_coords:] *= self.anchor_grid[i].repeat(
+                            (1, 1, 1, 1, self.num_coords // 2)
+                        )
+                        y[..., -self.num_coords:] += (
+                            self.grid[i] * self.stride[i]
+                        ).repeat((1, 1, 1, 1, self.num_coords // 2))
                 else:
                     xy = (y[..., 0:2] * 2. - 0.5 +
                           self.grid[i]) * self.stride[i]
@@ -109,13 +110,15 @@ class Detect(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self,
-                 cfg='yolov5s.yaml',
-                 ch=3,
-                 nc=None,
-                 anchors=None,
-                 num_coords=0,
-                 autobalance=False):
+    def __init__(
+        self,
+        cfg='yolov5s.yaml',
+        ch=3,
+        nc=None,
+        anchors=None,
+        num_coords=0,
+        autobalance=False
+    ):
         # TODO: here is a question, what the hell is `self.module`
         super().__init__()
         if isinstance(cfg, dict):
@@ -142,8 +145,7 @@ class Model(nn.Module):
             )
             self.yaml['nc'] = nc + num_coords
         if anchors:
-            LOGGER.info(
-                f'Overriding model.yaml anchors with anchors={anchors}')
+            LOGGER.info(f'Overriding model.yaml anchors with anchors={anchors}')
             self.yaml['anchors'] = round(anchors)
         self.nc = nc
         self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])
@@ -163,9 +165,12 @@ class Model(nn.Module):
             s = 256
             m.inplace = self.inplace
             # print(ch)
-            m.stride = torch.tensor([
-                s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))
-            ])
+            m.stride = torch.tensor(
+                [
+                    s / x.shape[-2]
+                    for x in self.forward(torch.zeros(1, ch, s, s))
+                ]
+            )
             m.anchors /= m.stride.view(-1, 1, 1)
             check_anchor_order(m)
             self.stride = m.stride
@@ -178,14 +183,16 @@ class Model(nn.Module):
         self.info()
         LOGGER.info('')
 
-    def forward(self,
-                x,
-                augment=False,
-                profile=False,
-                visualiza=False,
-                kp_flip=None,
-                scales=[0.5, 1, 2],
-                flips=[None, 3, None]):
+    def forward(
+        self,
+        x,
+        augment=False,
+        profile=False,
+        visualiza=False,
+        kp_flip=None,
+        scales=[0.5, 1, 2],
+        flips=[None, 3, None]
+    ):
         if augment:
             return self.forward_augment(x, kp_flip, s=scales, f=flips)
         return self.forward_once(x, profile, visualiza)
@@ -197,9 +204,9 @@ class Model(nn.Module):
         y = []
         train_out = None
         for si, fi in zip(s, f):
-            xi = scale_img(x.flip(fi) if fi else x,
-                           si,
-                           gs=int(self.stride.max()))
+            xi = scale_img(
+                x.flip(fi) if fi else x, si, gs=int(self.stride.max())
+            )
             yi, train_out_i = self.forward_once(xi)
             if si == 1 and fi is None:
                 train_out = train_out_i
@@ -213,17 +220,17 @@ class Model(nn.Module):
             # TODO: lol idn what the hell this if statement doing
             # NOTE: the `Detect` need a list as input, which means multi-scale predicton
             if m.f != -1:
-                x = y[m.f] if isinstance(
-                    m.f, int) else [x if j == -1 else y[j]
-                                    for j in m.f]  # from earlier layers
+                x = y[m.f] if isinstance(m.f, int) else [
+                    x if j == -1 else y[j] for j in m.f
+                ]  # from earlier layers
 
             if profile:
                 # i think this argument is for logging the model
                 c = isinstance(m, Detect)
                 # TODO: this dude is for computing FLOP, but i dont know that much
-                o = thop.profile(m,
-                                 inputs=(x.copy() if c else x),
-                                 verbose=False)[0] / 1E9 * 2 if thop else 0
+                o = thop.profile(
+                    m, inputs=(x.copy() if c else x), verbose=False
+                )[0] / 1E9 * 2 if thop else 0
                 # TODO: man this operation is too fucking high, i even dont know why
                 # NOTE: fine, it will just get a time, but because of there are multiple thread running
                 #       at the same time, so maybe they need to synv lol
@@ -264,8 +271,10 @@ def parse_model(d, ch):
     '''
     Given the model_dict and input_channels, return the full model
     '''
-    LOGGER.info('%3s%18s%3s%10s   %-40s%-30s' %
-                ('', 'from', 'n', 'param', 'module', 'arguments'))
+    LOGGER.info(
+        '%3s%18s%3s%10s   %-40s%-30s' %
+        ('', 'from', 'n', 'param', 'module', 'arguments')
+    )
     # TODO: idn why setting `depth_multiple` and `width_multiple`
     anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d[
         'width_multiple']
@@ -274,9 +283,9 @@ def parse_model(d, ch):
     no = na * (nc + 5)
 
     layers, save, c2 = [], [], ch[-1]
-    for i, (f, n, m,
-            args) in enumerate(d['backbone'] +
-                               d['head']):  # from, number, module, args
+    for i, (
+        f, n, m, args
+    ) in enumerate(d['backbone'] + d['head']):  # from, number, module, args
         # TODO: idn why use this code
         m = eval(m) if isinstance(m, str) else m
         for j, a in enumerate(args):
@@ -309,14 +318,14 @@ def parse_model(d, ch):
         else:
             c2 = ch[f]
 
-        m_ = nn.Sequential(*[m(*args)
-                             for _ in range(n)]) if 1 < n else m(*args)
+        m_ = nn.Sequential(*[m(*args) for _ in range(n)]) if 1 < n else m(*args)
         t = str(m)[8:-2].replace('__main__', '')
         np = sum([x.numel() for x in m_.parameters()])
         m_.i, m_.f, m_.type, m_.np = i, f, t, np
         LOGGER.info('%3s%18s%3s%10.0f   %-40s%-30s' % (i, f, n_, np, t, args))
-        save.extend(x % i for x in ([f] if isinstance(f, int) else f)
-                    if x != -1)
+        save.extend(
+            x % i for x in ([f] if isinstance(f, int) else f) if x != -1
+        )
         layers.append(m_)
         if i == 0:
             ch = []

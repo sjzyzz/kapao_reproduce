@@ -1,0 +1,1 @@
+python -m torch.distributed.launch --use_env train.py --batch-size 8 --data data/coco-kp.yaml --device 0
