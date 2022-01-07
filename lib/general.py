@@ -9,6 +9,8 @@ import torch
 from torch.functional import Tensor
 import torchvision
 
+from lib.torch_utils import init_torch_seeds
+
 
 def make_divisible(x, divisor):
     return math.ceil(x / divisor) * divisor

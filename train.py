@@ -4,8 +4,6 @@ import os.path as osp
 from pathlib import Path
 import time
 from tokenize import NL
-from typing import Optional
-from torch.nn.modules.pooling import AdaptiveMaxPool1d
 import yaml
 import os
 import random
@@ -27,19 +25,20 @@ from lib.loss import MyComputeLoss
 
 from utils.loggers import Loggers
 from utils.datasets import create_dataloader
-from utils.general import strip_optimizer
+from utils.general import strip_optimizer, check_file, increment_path, check_dataset
+from utils.torch_utils import select_device
 
 LOGGER = logging.getLogger(__name__)
 
-LOCAL_RANK = int(os.getenv('LOCAL_RANK'), -1)
-RANK = int(os.getenv('RANK'), -1)
-WORLD_SIZE = int(os.getenv('WORLD_SIZE'), 1)
+LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))
+RANK = int(os.getenv('RANK', -1))
+WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
 
 def train(hyp, opt, device):
     save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, val_scales, val_flips = Path(
         opt.save_dir
-    ), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.data, opt.cfg, opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.val_scales, opt.val_flips
+    ), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.val_scales, opt.val_flips
 
     val_flips = [None if f == -1 else f for f in val_flips]
 
@@ -82,7 +81,7 @@ def train(hyp, opt, device):
     with torch_distributed_zero_first(
         RANK
     ):  # other process wait until the master process already loaded the `data_dict`, and then they execute the following code
-        data_dict = data_dict
+        data_dict = data_dict or check_dataset(data)
     train_path, val_path = data_dict['train'], data_dict['val']
     nc = 1 if single_cls else int(data_dict['nc'])
     names = [
@@ -440,7 +439,7 @@ def train(hyp, opt, device):
     return results
 
 
-def parse_opt():
+def parse_opt(known=False):
     parser = argparse.ArgumentParser()
     # GLOBAL
     # TODO: wth are these argument
@@ -461,7 +460,7 @@ def parse_opt():
         help='evolve hyperparameters for x generations'
     )
     # MODEL
-    parser.add_argument('--hyp', type=str, default='data/hyps/hyp.kp-p6.yaml')
+    parser.add_argument('--hyp', type=str, default='data/coco-kp.yaml')
     parser.add_argument(
         '--weights',
         type=str,
@@ -469,6 +468,11 @@ def parse_opt():
         help='initial weights path'
     )
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
+    parser.add_argument(
+        '--single-cls',
+        action='store_true',
+        help='train multi-class data as single-class'
+    )
     # DATASET
     parser.add_argument(
         '--data',
@@ -493,10 +497,29 @@ def parse_opt():
         help='total batch size for all GPUs'
     )
     parser.add_argument(
+        '--workers',
+        type=int,
+        default=8,
+        help='maximum number of dataloader workers'
+    )
+    parser.add_argument(
         '--image-weights',
-        action='store_ture',
+        action='store_true',
         help='use weighted image selection for training'
     )
+    parser.add_argument('--epochs', type=int, default=300)
+    parser.add_argument(
+        '--noval', action='store_true', help='only validate final epoch'
+    )
+    parser.add_argument(
+        '--freeze',
+        type=int,
+        default=0,
+        help='Number of layers to freeze. backbone=10, all=24'
+    )
+    # VALIDATE
+    parser.add_argument('--val-scales', type=float, nargs='+', default=[1])
+    parser.add_argument('--val-flips', type=int, nargs='+', default=[-1])
     # SAVE
     parser.add_argument(
         '--project', default='runs/train', help='save to project/name'
@@ -507,6 +530,12 @@ def parse_opt():
         action='store_true',
         help='existing project/name ok, do not increment'
     )
+    parser.add_argument(
+        '--nosave', action='store_true', help='only save final checkpoint'
+    )
+
+    opt = parser.parse_known_args()[0] if known else parser.parse_args()
+    return opt
 
 
 def main(opt):
