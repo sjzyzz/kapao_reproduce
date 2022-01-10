@@ -101,15 +101,15 @@ class ModelEMA:
         self.decay = lambda x: decay * (
             1 - math.exp(-x / 2000)
         )  # decay exponential ramp (to help early epochs)
-        for p in self.ema.prameters():
-            p.require_grad_(False)
+        for p in self.ema.parameters():
+            p.requires_grad_(False)
 
     def update(self, model):
         # Update EMA parameters
         with torch.no_grad():
-            self.update += 1
+            self.updates += 1
             # TODO: idn why use this `d` to decay but not directly use original `decay`
-            d = self.decay(self.update)
+            d = self.decay(self.updates)
 
             msd = model.module.state_dict(
             ) if is_parallel(model) else model.state_dict()

@@ -15,7 +15,7 @@ import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda import amp
 from torch.optim import Adam, SGD, lr_scheduler
-import tqdm
+from tqdm import tqdm
 
 from lib.general import set_logging, colorstr, check_img_size, one_cycle, init_seeds
 from lib.yolo import Model
@@ -90,7 +90,7 @@ def train(hyp, opt, device):
     assert len(
         names
     ) == nc, f'{len(names)} names found for nc={nc} dataset in {data}'
-    is_coco = data.endwith('coco.yaml') and nc == 80
+    # is_coco = data.endswith('coco.yaml') and nc == 80
 
     labels_dir = data_dict.get('labels', 'labels')
     kp_flip = data_dict.get('kp_flip')
@@ -98,7 +98,7 @@ def train(hyp, opt, device):
     num_coords = data_dict.get('num_coords', 0)
 
     # Model
-    pretrained = weights.endwith('.pt')
+    pretrained = weights.endswith('.pt')
     if pretrained:
         with torch_distributed_zero_first(RANK):
             weights = attempt_download(weights)
@@ -162,7 +162,7 @@ def train(hyp, opt, device):
             'weight_decay': hyp['weight_decay'],
         }
     )
-    optimizer.add_param_group({{'params': g2}})
+    optimizer.add_param_group({'params': g2})
     # Scheduler
     if opt.linear_lr:
         lf = lambda epoch: (1 - epoch / (epochs - 1)) * (1.0 - hyp['lrf']
@@ -184,7 +184,7 @@ def train(hyp, opt, device):
     # TODO: why use this `max` function
     gs = max(int(model.stride.max()), 32)
     nl = model.model[-1].nl
-    imgsz = check_img_size(opt.imgsz, gs, floor=gs * 2)
+    imgsz = check_img_size(opt.img_size, gs, floor=gs * 2)
 
     # DP mode
     if cuda and RANK == -1 and 1 < torch.cuda.device_count():
@@ -348,7 +348,7 @@ def train(hyp, opt, device):
                 pbar.set_description(
                     ('%10s' * 2 + '%10.4g' * 6) % (
                         f'{epoch}/{epochs - 1}', men, *mloss, targets.shape[0],
-                        imgs.shpae[-1]
+                        imgs.shape[-1]
                     )
                 )
                 # callbacks.on_train_batch_end(
@@ -460,7 +460,7 @@ def parse_opt(known=False):
         help='evolve hyperparameters for x generations'
     )
     # MODEL
-    parser.add_argument('--hyp', type=str, default='data/coco-kp.yaml')
+    parser.add_argument('--hyp', type=str, default='cfg/hyp/hyp.kp-p6.yaml')
     parser.add_argument(
         '--weights',
         type=str,
@@ -485,6 +485,15 @@ def parse_opt(known=False):
     )
     parser.add_argument(
         '--rect', action='store_true', help='rectangular training'
+    )
+    parser.add_argument(
+        '--cache', type=str, nargs='?', const='ram', help='--cache images in "ram" (default) or "disk"'
+    )
+    parser.add_argument(
+        '--quad', action='store_true', help='quad dataloader'
+    )
+    parser.add_argument(
+        '--label-smoothing', type=float, default=0.0, help='Label smoothing epsilon'
     )
     # TRAIN
     parser.add_argument(
@@ -516,6 +525,18 @@ def parse_opt(known=False):
         type=int,
         default=0,
         help='Number of layers to freeze. backbone=10, all=24'
+    )
+    parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
+    # OPTIMIZER
+    parser.add_argument(
+        '--adam',
+        action='store_true',
+        help='use torch.optim.Adam() optimizer'
+    )
+    parser.add_argument(
+        '--linear-lr',
+        action='store_true',
+        help='linear LR'
     )
     # VALIDATE
     parser.add_argument('--val-scales', type=float, nargs='+', default=[1])

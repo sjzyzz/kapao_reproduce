@@ -1,5 +1,5 @@
 # train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
-path: data/datasets/coco
+path: /datasets/coco2017
 labels: kp_labels
 train: kp_labels/img_txt/train2017.txt
 val: kp_labels/img_txt/val2017.txt
@@ -7,7 +7,7 @@ test: kp_labels/img_txt/test2017.txt
 
 train_annotations: annotations/person_keypoints_train2017.json
 val_annotations: annotations/person_keypoints_val2017.json
-test_annotations: annotations/image_info_test-dev2017.json
+# test_annotations: annotations/image_info_test-dev2017.json
 
 pose_obj: True # write pose object labels
 
