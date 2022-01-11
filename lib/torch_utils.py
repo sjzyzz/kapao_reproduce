@@ -2,6 +2,7 @@ from contextlib import contextmanager
 import logging
 from copy import deepcopy
 import math
+import os
 
 import torch
 import torch.nn as nn
@@ -9,6 +10,8 @@ import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 
 LOGGER = logging.getLogger(__name__)
+LOGGING_LEVEL = logging.INFO if os.getenv('RANK', -1) in [-1, 0] else logging.WARN
+LOGGER.setLevel(LOGGING_LEVEL)
 
 
 def select_device(device=''):
@@ -87,6 +90,15 @@ def intersect_dicts(da, db, exclude=()):
 def de_parallel(model):
     return model.module if is_parallel(model) else model
 
+def copy_attr(a, b, include=(), exclude=()):
+    """
+    Copy attributes from b to a
+    """
+    for k, v in b.__dict__.items():
+        if (len(include) and k not in include) or k.startswith('_') or k in exclude:
+            continue
+        else:
+            setattr(a, k, v)
 
 class ModelEMA:
     """
@@ -117,6 +129,13 @@ class ModelEMA:
                 if v.dtype.is_floating_point:
                     v *= d
                     v += (1. - d) * msd[k].detach()
+    
+    def updata_attr(self, model, include=(), exclude=('process_group', 'reducer')):
+        """
+        Update EMA attributes
+        """
+
+        copy_attr(self.ema, model, include, exclude)
 
 
 def init_torch_seeds(seed=0):
@@ -127,3 +146,4 @@ def init_torch_seeds(seed=0):
     else:
         # faster, less reproducible
         cudnn.benchmark, cudnn.deterministic = True, False
+

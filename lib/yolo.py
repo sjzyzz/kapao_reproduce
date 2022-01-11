@@ -11,7 +11,7 @@ from utils.plots import feature_visualization
 from utils.autoanchor import check_anchor_order
 
 from lib.torch_utils import model_info
-from lib.general import make_divisible
+from lib.general import make_divisible, get_logger
 from lib.common import *
 
 try:
@@ -19,8 +19,7 @@ try:
 except ImportError:
     thop = None
 
-LOGGER = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+LOGGER = get_logger(__name__)
 
 
 class Detect(nn.Module):

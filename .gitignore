@@ -1,4 +1,6 @@
 *.pt
 *.png
-.vscode
+.vscode/
 runs/
+test_logging/
+mp/

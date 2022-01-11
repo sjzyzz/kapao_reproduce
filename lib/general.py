@@ -149,8 +149,17 @@ def non_max_suppression_kp(
 def set_logging(rank=-1, verbose=True):
     logging.basicConfig(
         format="%(message)s",
-        level=logging.INFO if verbose and rank in [-1, 0] else logging.WARN
+        level=logging.INFO if (verbose and rank in [-1, 0]) else logging.WARN
     )
+
+def get_logger(name):
+    import os
+
+    LOGGER = logging.getLogger(name)
+    LOGGING_LEVEL = logging.INFO if os.getenv('RANK', -1) in [-1, 0] else logging.WARN
+    LOGGER.setLevel(LOGGING_LEVEL)
+    
+    return LOGGER
 
 
 def colorstr(*input):

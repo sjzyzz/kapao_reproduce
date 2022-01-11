@@ -3,13 +3,15 @@ import logging
 import torch
 import torch.nn as nn
 
+from lib.general import get_logger
+
 from utils.metrics import bbox_iou
 from utils.loss import smooth_BCE, FocalLoss
 
 from lib.torch_utils import is_parallel
 
 logging.basicConfig(level=logging.DEBUG)
-LOGGER = logging.getLogger(__name__)
+LOGGER = get_logger(__name__)
 
 
 class MyComputeLoss:

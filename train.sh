@@ -1,1 +1,1 @@
-python -m torch.distributed.launch --nproc_per_node=4 --use_env train.py --batch-size 8 --data data/coco-kp.yaml
+python -m torch.distributed.run --nproc_per_node=4 tools/train.py --batch-size 24 --data data/coco-kp.yaml

@@ -11,8 +11,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from utils.datasets import Albumentations, InfiniteDataLoader, IMG_FORMATS, HELP_URL, img2label_paths, get_hash, load_image, verify_image_label
-from utils.general import xywhn2xyxy, letterbox, xyxy2xywhn
+from utils.datasets import Albumentations, InfiniteDataLoader, IMG_FORMATS, HELP_URL, img2label_paths, get_hash, load_image, verify_image_label, letterbox
+from utils.general import xywhn2xyxy, xyxy2xywhn
 
 from lib.torch_utils import torch_distributed_zero_first
 
@@ -123,7 +123,12 @@ class LoadImagesAndLabels(Dataset):
                 if p.is_dir():
                     f += glob.glob(str(p / '**' / '*.*'), recursive=True)
                 elif p.is_file():
-                    pass
+                    with open(p, 'r') as t:
+                        t = t.read().strip().splitlines()
+                        parent = str(p.parent) + os.sep
+                        f += [
+                            x.replace('./', parent) if x.startswith('./') else x for x in t
+                        ]
                 else:
                     raise Exception(f'{prefix}{p} dose not exist')
 
@@ -155,7 +160,7 @@ class LoadImagesAndLabels(Dataset):
             cache, exists = self.cache_labels(cache_path, prefix), False
 
         # Display cache
-        nf, nm, ne, nc, n = cache.pop['results']
+        nf, nm, ne, nc, n = cache.pop('results')
         if exists:
             d = f"Scanning '{cache_path}' images and labels... {nf} found, {nm} missing, {ne} empty, {nc} corrupted"
             # TODO: idk what this meaning
@@ -262,7 +267,9 @@ class LoadImagesAndLabels(Dataset):
         index = self.indices[index]
 
         hyp = self.hyp
-        mosaic = self.mosaic and random.random < hyp['mosaic']
+        # TODO: maybe one day add mosaic function
+        # mosaic = self.mosaic and random.random() < hyp['mosaic']
+        mosaic = False
         if mosaic:
             pass
         else:

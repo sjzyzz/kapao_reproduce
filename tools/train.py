@@ -1,9 +1,9 @@
 import argparse
+from copy import deepcopy
 import logging
 import os.path as osp
 from pathlib import Path
 import time
-from tokenize import NL
 import yaml
 import os
 import random
@@ -17,25 +17,32 @@ from torch.cuda import amp
 from torch.optim import Adam, SGD, lr_scheduler
 from tqdm import tqdm
 
+import _init_path # make sure lib dir can be found
 from lib.general import set_logging, colorstr, check_img_size, one_cycle, init_seeds
 from lib.yolo import Model
 from lib.torch_utils import torch_distributed_zero_first, de_parallel, intersect_dicts, ModelEMA
 from lib.downloads import attempt_download
 from lib.loss import MyComputeLoss
+from lib.datasets import create_dataloader
 
 from utils.loggers import Loggers
-from utils.datasets import create_dataloader
+# from utils.datasets import create_dataloader
 from utils.general import strip_optimizer, check_file, increment_path, check_dataset
 from utils.torch_utils import select_device
-
-LOGGER = logging.getLogger(__name__)
+from utils.autoanchor import check_anchors
+from utils.metrics import fitness
+from utils.callbacks import Callbacks
+from val import run
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))
 RANK = int(os.getenv('RANK', -1))
 WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 
+LOGGER = logging.getLogger(__name__)
+LOGGING_LEVEL = logging.INFO if RANK in [-1, 0] else logging.WARN
+LOGGER.setLevel(LOGGING_LEVEL)
 
-def train(hyp, opt, device):
+def train(hyp, opt, device, callbacks=Callbacks()):
     save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, val_scales, val_flips = Path(
         opt.save_dir
     ), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.val_scales, opt.val_flips
@@ -225,6 +232,33 @@ def train(hyp, opt, device):
     assert mlc < nc, f'Label class {mlc} exceeds nc={nc} in {data}. Possible class labels are 0-{nc - 1}'
 
     # Process 0
+    if RANK in [-1, 0]:
+        val_loader = create_dataloader(
+            val_path,
+            labels_dir,
+            imgsz,
+            batch_size // WORLD_SIZE,
+            gs, 
+            single_cls,
+            hyp=hyp,
+            cache=None if noval else opt.cache,
+            rect=False,
+            rank=-1,
+            workers=workers,
+            pad=0.5,
+            prefix=colorstr('val: '),
+            kp_flip=kp_flip,
+            kp_bbox=kp_bbox,
+        )[0]
+
+        if not resume:
+            if not opt.noautoanchor:
+                check_anchors(
+                    dataset, model=model, thr=hyp['anchor_t'], imgsz=imgsz,
+                )
+            model.half().float()
+        
+        callbacks.on_pretrain_routine_end()
 
     # DDP mode
     if cuda and RANK != -1:
@@ -291,6 +325,7 @@ def train(hyp, opt, device):
             pbar = tqdm(pbar, total=nb)
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:
+            break
             ni = i + nb * epoch
             # TODO: idn the usage of `non_blocking`
             # TODO: i think the operation should be taken to `dataset`
@@ -359,68 +394,57 @@ def train(hyp, opt, device):
         lr = [x['lr'] for x in optimizer.param_groups[:3]]
         scheduler.step()
 
-        # if RANK in [-1, 0]:
-        #     #  mAP
-        #     callbacks.on_train_epoch_end(epoch=epoch)
-        #     ema.update_attr(
-        #         model,
-        #         include=[
-        #             'yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights'
-        #         ]
-        #     )
-        #     # final_epoch = (epoch + 1 == epochs) or stopper.possible_stop
-        #     final_epoch = (epoch + 1 == epochs)
-        #     if not noval or final_epoch:
-        #         results, maps, _ = val.run(
-        #             data_dict,
-        #             batch_size=batch_size // WORLD_SIZE,
-        #             imgsz=imgsz,
-        #             conf_thres=0.01,
-        #             model=ema.ema,
-        #             dataloader=val_dataloader,
-        #             compute_loss=compute_loss,
-        #             scales=val_scales,
-        #             flips=val_flips,
-        #         )
+        if RANK in [-1, 0]:
+            # mAP
+            callbacks.on_train_epoch_end(epoch=epoch)
+            ema.updata_attr(
+                model,
+                include=[
+                    'yaml', 'nc', 'hyp', 'names', 'stride', 'class_weights',
+                ]
+            )
+            # TODO: I just ignore the early stop here
+            final_epoch = (epoch + 1 == epochs)
+            if not noval or final_epoch:
+                results, maps, _ = run(
+                    data_dict,
+                    batch_size=batch_size // WORLD_SIZE,
+                    imgsz=imgsz,
+                    conf_thres=0.01,
+                    model=ema.ema,
+                    dataloader=val_loader,
+                    compute_loss=compute_loss,
+                    scales=val_scales,
+                    flips=val_flips,
+                )
+            
+            # Update best mAP
+            fi = fitness(np.array(results).reshape(1, -1))
+            if fi > best_fitness:
+                best_fitness = fi
+            log_vals = list(mloss) + list(results) + lr
+            callbacks.on_fit_epoch_end(log_vals, epoch, best_fitness, fi)
 
-        #     # Updata best mAP
-        #     fi = fitness(np.array(results).reshape(1, -1))
-        #     if best_fitness < fi:
-        #         best_fitness = fi
-        #     log_vals = list(mloss) + list(results) + lr
-        #     callbacks.on_fit_epoch_end(log_vals, epoch, best_fitness, fi)
+            # Save model
+            if (not nosave) or (final_epoch and not evolve):
+                ckpt = {
+                    'epoch': epoch,
+                    'best_fitness': best_fitness,
+                    'model': deepcopy(de_parallel(model)).half(),
+                    'ema': deepcopy(ema.ema).half(),
+                    'updates': ema.updates,
+                    'optimizer': optimizer.state_dict(),
+                    'wandb_id': loggers.wandb.wandb_run.id if loggers.wandb else None,
+                }
 
-        #     # Save model
-        #     if (not nosave) or (final_epoch and not evolve):
-        #         ckpt = {
-        #             'epoch':
-        #                 epoch,
-        #             'best_fitness':
-        #                 best_fitness,
-        #             'model':
-        #                 deepcopy(de_parallel(model)).half(),
-        #             'ema':
-        #                 deepcopy(ema.ema).half(),
-        #             'updates':
-        #                 ema.updates,
-        #             'optimizer':
-        #                 optimizer.state_dict(),
-        #             'wandb_id':
-        #                 loggers.wandb.wandb_run.id if loggers.wandb else None,
-        #         }
-
-        #         # Save last, best and delete
-        #         torch.save(ckpt, last)
-        #         if best_fitness == fi:
-        #             torch.save(ckpt, best)
-        #         del ckpt
-        #         callbacks.on_model_save(
-        #             last, epoch, final_epoch, best_fitness, fi
-        #         )
-
-        #     # Stop Single-GPU
-        #     if RANK == -1 and stopper(epoch=epoch, fitness=fi):
-        #         break
+                # Save last, best and delete
+                torch.save(ckpt, last)
+                if best_fitness == fi:
+                    torch.save(ckpt, best)
+                del ckpt
+                callbacks.on_model_save(
+                    last, epoch, final_epoch, best_fitness, fi
+                )
 
     # end training
     if RANK in [-1, 0]:
@@ -464,7 +488,7 @@ def parse_opt(known=False):
     parser.add_argument(
         '--weights',
         type=str,
-        default='yolov5s6.pt',
+        default='kapao_s_coco.pt',
         help='initial weights path'
     )
     parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
@@ -472,6 +496,11 @@ def parse_opt(known=False):
         '--single-cls',
         action='store_true',
         help='train multi-class data as single-class'
+    )
+    parser.add_argument(
+        '--noautoanchor',
+        action='store_true',
+        help='disable autoachor check'
     )
     # DATASET
     parser.add_argument(

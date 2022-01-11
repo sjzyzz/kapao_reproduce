@@ -20,9 +20,9 @@ def add_path(path):
         sys.path.insert(0, path)
 
 this_dir = osp.dirname(__file__)
-lib_parent_dir = osp.join(this_dir, '..')
+lib_dir = osp.join(this_dir, '..')
 
 add_path('/home/sjzyzz/kapao')
-add_path(lib_parent_dir)
+add_path(lib_dir)
 # print(sys.path)
 # import kapao

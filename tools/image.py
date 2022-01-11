@@ -11,7 +11,7 @@ from lib.datasets import LoadImages
 from lib.yolo import Model
 from lib.experimental import load_weights
 from lib.general import scale_coords
-from val import run_nms, post_process_batch
+from tools.val import run_nms, post_process_batch
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
