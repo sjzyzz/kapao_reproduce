@@ -1,5 +1,6 @@
 import math
-from os import makedirs
+import os.path as osp
+from pathlib import Path
 import time
 import logging
 import random
@@ -8,8 +9,10 @@ import numpy as np
 import torch
 from torch.functional import Tensor
 import torchvision
+import yaml
 
 from lib.torch_utils import init_torch_seeds
+from lib.labels import write_kp_labels
 
 
 def make_divisible(x, divisor):
@@ -221,3 +224,37 @@ def init_seeds(seed=0):
     random.seed(seed)
     np.random.seed(seed)
     init_torch_seeds(seed)
+
+def check_dataset(data, autodownload=True):
+    """
+    Main contradiction: before create dataset, I do not know whether the label file that I need is properly created, so I use 
+                        this function to check.
+    HOWTO:              In short, it check whether the files in `data` exist, if not, create them. 
+    """
+
+    if isinstance(data, (str, Path)):
+        with open(data, errors='ignore') as f:
+            data = yaml.safe_load(f)
+    
+    path = Path(data.get('path') or '')
+    for k in 'train', 'val', 'test':
+        if data.get(k):
+            data[k] = str(path / data[k]) if isinstance(data[k], str) else [str(path / x) for x in data[k]]
+    
+    assert 'nc' in data, "Dataset 'nc' key missing"
+    if 'names' not in data:
+        data['names'] = [f'class{i}' for i in range(data['nc'])]
+    train, val, test, s = [data.get(x) for x in ('train', 'val', 'test', 'download')]
+    if val:
+        val = [Path(x).resolve() for x in (val if isinstance(val, list) else [val])]
+        if not all(x.exists() for x in val):
+            if 'kp_bbox' in data.keys():
+                print('Writing dataset labels to {}...'.format(osp.join(data['path'], data['labels'])))
+                write_kp_labels(data)
+            else:
+                print('\nWARNING: Dataset not found, nonexistent paths: %s' % [str(x) for x in val if not x.exists()])
+                if s and autodownload:
+                    pass
+                else:
+                    raise Exception('Dataset not found.')
+    return data

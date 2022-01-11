@@ -43,6 +43,7 @@ LOGGING_LEVEL = logging.INFO if RANK in [-1, 0] else logging.WARN
 LOGGER.setLevel(LOGGING_LEVEL)
 
 def train(hyp, opt, device, callbacks=Callbacks()):
+    # Just get some variable
     save_dir, epochs, batch_size, weights, single_cls, evolve, data, cfg, resume, noval, nosave, workers, freeze, val_scales, val_flips = Path(
         opt.save_dir
     ), opt.epochs, opt.batch_size, opt.weights, opt.single_cls, opt.evolve, opt.data, opt.cfg, opt.resume, opt.noval, opt.nosave, opt.workers, opt.freeze, opt.val_scales, opt.val_flips
@@ -325,7 +326,6 @@ def train(hyp, opt, device, callbacks=Callbacks()):
             pbar = tqdm(pbar, total=nb)
         optimizer.zero_grad()
         for i, (imgs, targets, paths, _) in pbar:
-            break
             ni = i + nb * epoch
             # TODO: idn the usage of `non_blocking`
             # TODO: i think the operation should be taken to `dataset`
