@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 import logging
 import random
+import glob
 
 import numpy as np
 import torch
@@ -258,3 +259,10 @@ def check_dataset(data, autodownload=True):
                 else:
                     raise Exception('Dataset not found.')
     return data
+
+def get_latest_run(search_dir='.'):
+    """
+    Return path to most recent 'last.pt' in /runs (i.e. to --resume from)
+    """
+    last_list = glob.glob(f'{search_dir}/**/last*.pt', recursive=True)
+    return max(last_list, key=osp.getctime) if last_list else ''

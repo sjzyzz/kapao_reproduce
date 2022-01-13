@@ -1,5 +1,6 @@
 import argparse
 from copy import deepcopy
+from crypt import methods
 import logging
 import os.path as osp
 from pathlib import Path
@@ -18,20 +19,21 @@ from torch.optim import Adam, SGD, lr_scheduler
 from tqdm import tqdm
 
 import _init_path # make sure lib dir can be found
-from lib.general import set_logging, colorstr, check_img_size, one_cycle, init_seeds
+from lib.general import set_logging, colorstr, check_img_size, one_cycle, init_seeds, get_latest_run
+from lib.loggers import Loggers
 from lib.yolo import Model
 from lib.torch_utils import torch_distributed_zero_first, de_parallel, intersect_dicts, ModelEMA
 from lib.downloads import attempt_download
 from lib.loss import MyComputeLoss
 from lib.datasets import create_dataloader
+from lib.callbacks import Callbacks
 
-from utils.loggers import Loggers
+# from utils.loggers import Loggers
 # from utils.datasets import create_dataloader
 from utils.general import strip_optimizer, check_file, increment_path, check_dataset
 from utils.torch_utils import select_device
 from utils.autoanchor import check_anchors
 from utils.metrics import fitness
-from utils.callbacks import Callbacks
 from val import run
 
 LOCAL_RANK = int(os.getenv('LOCAL_RANK', -1))
@@ -41,6 +43,11 @@ WORLD_SIZE = int(os.getenv('WORLD_SIZE', 1))
 LOGGER = logging.getLogger(__name__)
 LOGGING_LEVEL = logging.INFO if RANK in [-1, 0] else logging.WARN
 LOGGER.setLevel(LOGGING_LEVEL)
+# only one process write log to file
+if RANK in [-1, 0]:
+    fh = logging.FileHandler('kapao_reproduce_train.log', mode='w+')
+    # fh.setLevel(logging.NOTSET)
+    LOGGER.addHandler(fh)
 
 def train(hyp, opt, device, callbacks=Callbacks()):
     # Just get some variable
@@ -79,8 +86,11 @@ def train(hyp, opt, device, callbacks=Callbacks()):
             if resume:
                 weights, epochs, hyp = opt.weights, opt.epochs, opt.hyp
 
-        # TODO: register actions, but idn why
-        pass
+        # register actions
+        # I don't need this shit
+        # Fine I need this shit lol
+        for k in methods(loggers):
+            callbacks.register_action(k, callback=getattr(loggers, k))
 
     # config
     plots = not evolve
@@ -140,7 +150,7 @@ def train(hyp, opt, device, callbacks=Callbacks()):
             v.requires_grad = False
 
     # Optimizer
-    nbs = 64
+    nbs = 64 # nominal batch size
     accumulate = max(round(nbs / batch_size), 1)
     # TODO: idn why this stuff
     hyp['weight_decay'] *= batch_size * accumulate / nbs
@@ -187,6 +197,26 @@ def train(hyp, opt, device, callbacks=Callbacks()):
 
     # Resume
     start_epoch, best_fitness = 0, 0
+    if pretrained:
+        # Optimizer
+        if ckpt['optimizer'] is not None:
+            optimizer.load_state_dict(ckpt['optimizer'])
+            best_fitness = ckpt['best_fitness']
+        
+        # EMA
+        if ema and ckpt.get('ema'):
+            ema.ema.load_state_dict(ckpt['ema'].float().state_dict())
+            ema.updates = ckpt['updates']
+        
+        # Epochs
+        start_epoch = ckpt['epoch'] + 1
+        if resume:
+            assert start_epoch > 0, f'{weights} training to {epochs} epochs is finished, nothing to resume'
+        if epochs < start_epoch:
+            LOGGER.info(f"{weights} has been trained for {ckpt['epoch']}. Fine-tuning for {epochs} more epochs")
+            epochs += ckpt['epoch']
+        
+        del ckpt, csd
 
     # Image size
     # TODO: why use this `max` function
@@ -279,13 +309,13 @@ def train(hyp, opt, device, callbacks=Callbacks()):
 
     # Start training
     t0 = time.time()
-    nw = max(round(hyp['warmup_epochs'] * nb), 1000)
+    nw = max(round(hyp['warmup_epochs'] * nb), 1000) # number of warmup iterations
     last_opt_step = -1
     maps = np.zeros(nc)
     results = (0, 0, 0, 0, 0, 0, 0, 0)
     # TODO: idn why
     scheduler.last_epoch = start_epoch - 1
-    # scaler = amp.GradScaler(enable=cuda)
+    scaler = amp.GradScaler(enabled=cuda)
     # stopper = EarlyStopping(patience=opt.patience)
     compute_loss = MyComputeLoss(
         model, autobalance=False, num_coords=num_coords
@@ -299,17 +329,6 @@ def train(hyp, opt, device, callbacks=Callbacks()):
 
     for epoch in range(start_epoch, epochs):
         model.train()
-
-        # if opt.image_weights:
-        #     # TODO: what the hell
-        #     class_weights = model.class_weights.cpu().numpy(
-        #     ) * (1 - maps)**2 / nc
-        #     image_weights = labels_to_image_weights(
-        #         dataset.labels, nc=nc, class_weights=cw
-        #     )
-        #     dataset.indices = random.choices(
-        #         range(dataset.n), weights=image_weights, k=dataset.n
-        #     )
 
         mloss = torch.zeros(4, device=device)
         # TODO: idn what is going on here
@@ -332,47 +351,39 @@ def train(hyp, opt, device, callbacks=Callbacks()):
             imgs = imgs.to(device, non_blocking=True).float() / 255.0
 
             # Warmup
-            # if ni <= nw:
-            #     pass
-            # Multi-scale
-            # if opt.multi_scale:
-            #     sz = random.randrange(imgsz * 0.5, imgsz * 1.5 + gs) // gs * gs
-            #     sf = sz / max(imgs.shape[2:])
-            #     if sf != 1:
-            #         # stretched to greatest-stride-multiple
-            #         ns = [math.ceil(x * sf / gs) * gs for x in imgs.shape[2:]]
-            #         imgs = nn.functional.interpolate(
-            #             imgs, size=ns, mode='bilinear', align_corners=False
-            #         )
+            if ni <= nw:
+                xi = [0, nw] # x interp
+                # just trying to accumelate in warm up stage
+                # TODO: why the `accumulate` keep on changing as the batch changes
+                accumulate = max(1, np.interp(ni, xi, [1, nbs / batch_size]).round())
+                for j, x in enumerate(optimizer.param_groups):
+                    x['lr'] = np.interp(ni, xi, [hyp['warmup_bias_lr'] if j == 2 else 0.0, x['initial_lr'] * lf(epoch)])
+                    if 'momentum' in x:
+                        x['momentum'] = np.interp(ni, xi, [hyp['warmup_momentum'], hyp['momentum']])
 
             # Forward
-            # TODO: idn why this statement
-            # with amp.autocast(enabled=cuda):
+            with amp.autocast(enabled=cuda):
             # get your fucking model lol
-            pred = model(imgs)
-            loss, loss_items = compute_loss(
-                pred, targets.to(device)
-            )  # loss scaled by batch_size
-            # TODO: idn why those multiply
-            if RANK != -1:
-                loss *= WORLD_SIZE
-            if opt.quad:
-                loss *= 4.
+                pred = model(imgs)
+                loss, loss_items = compute_loss(
+                    pred, targets.to(device)
+                )  # loss scaled by batch_size
+                # TODO: idn why those multiply
+                if RANK != -1:
+                    loss *= WORLD_SIZE
+                if opt.quad:
+                    loss *= 4.
 
             # Backward
-            # TODO: idn why this statement
-            # scaler.scale(loss).backward()
-            loss.backward()
+            scaler.scale(loss).backward()
 
             # Optimize
-            # TODO: idn why this warp
-            # if accumulate <= ni - last_opt_step:
-            # scaler.step(optimizer)
-            # scaler.update()
-            optimizer.step()
-            optimizer.zero_grad()
-            if ema:
-                ema.update(model)
+            if accumulate <= ni - last_opt_step:
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+                if ema:
+                    ema.update(model)
                 last_opt_step = ni
 
             # Log
@@ -380,12 +391,15 @@ def train(hyp, opt, device, callbacks=Callbacks()):
                 mloss = (mloss * i + loss_items) / (i + 1)
                 # TODO: idn the meaning of `.3g`
                 men = f'{torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0:.3g}G'
-                pbar.set_description(
-                    ('%10s' * 2 + '%10.4g' * 6) % (
+                desc = ('%10s' * 2 + '%10.4g' * 6) % (
                         f'{epoch}/{epochs - 1}', men, *mloss, targets.shape[0],
                         imgs.shape[-1]
                     )
+                pbar.set_description(
+                    desc
                 )
+                if i % 100 == 0:
+                    LOGGER.info(desc)
                 # callbacks.on_train_batch_end(
                 #     ni, model, imgs, targets, paths, plots, opt.sync_bn
                 # )
@@ -424,6 +438,7 @@ def train(hyp, opt, device, callbacks=Callbacks()):
                 best_fitness = fi
             log_vals = list(mloss) + list(results) + lr
             callbacks.on_fit_epoch_end(log_vals, epoch, best_fitness, fi)
+            LOGGER.info(log_vals)
 
             # Save model
             if (not nosave) or (final_epoch and not evolve):
@@ -556,6 +571,8 @@ def parse_opt(known=False):
         help='Number of layers to freeze. backbone=10, all=24'
     )
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
+    # WANDB
+    parser.add_argument('--entity', default=None, help='W&B entity')
     # OPTIMIZER
     parser.add_argument(
         '--adam',
@@ -616,30 +633,34 @@ def main(opt):
             increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok)
         )
 
-        device = select_device(opt.device, batch_size=opt.batch_size)
-        if LOCAL_RANK != -1:
-            from datetime import timedelta
-            assert LOCAL_RANK < torch.cuda.device_count(
-            ), 'insufficient CUDA devices for DDP command'
-            assert opt.batch_size % WORLD_SIZE == 0, '--batch-size must be multiple of CUDA device count'
-            assert not opt.image_weights, '--image-weights argument is not compatible with DDP training'
-            assert not opt.evolve, '--evolve argument is not compatible with DDP training'
-            torch.cuda.set_device(LOCAL_RANK)
-            device = torch.device('cuda', LOCAL_RANK)
-            dist.init_process_group(
-                backend='nccl' if dist.is_nccl_available() else 'gloo'
-            )
+    device = select_device(opt.device, batch_size=opt.batch_size)
+    if LOCAL_RANK != -1:
+        from datetime import timedelta
+        assert LOCAL_RANK < torch.cuda.device_count(
+        ), 'insufficient CUDA devices for DDP command'
+        assert opt.batch_size % WORLD_SIZE == 0, '--batch-size must be multiple of CUDA device count'
+        assert not opt.image_weights, '--image-weights argument is not compatible with DDP training'
+        assert not opt.evolve, '--evolve argument is not compatible with DDP training'
+        torch.cuda.set_device(LOCAL_RANK)
+        device = torch.device('cuda', LOCAL_RANK)
+        dist.init_process_group(
+            backend='nccl' if dist.is_nccl_available() else 'gloo'
+        )
 
-        if not opt.evolve:
-            train(opt.hyp, opt, device)
-            if 1 < WORLD_SIZE and RANK == 0:
-                _ = [
-                    print('Destroying process group... ', end=''),
-                    dist.destroy_process_group(),
-                    print('Done.')
-                ]
+    if not opt.evolve:
+        train(opt.hyp, opt, device)
+        if 1 < WORLD_SIZE and RANK == 0:
+            _ = [
+                print('Destroying process group... ', end=''),
+                dist.destroy_process_group(),
+                print('Done.')
+            ]
+    else:
+        pass
 
 
 if __name__ == "__main__":
+    # JUST FOR TEST
+    LOGGER.debug('I wonder')
     opt = parse_opt()
     main(opt)

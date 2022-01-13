@@ -22,7 +22,7 @@ def write_kp_labels(data):
         osp.splitext(osp.split(data[s])[-1])[0] for s in ['train', 'val', 'test'] if s in data
     ]
     annotations = [
-        osp.join(data['path'], data['{}_annotations'.format(s)] for s in ['train', 'val', 'test'] if s in data)
+        osp.join(data['path'], data['{}_annotations'.format(s)]) for s in ['train', 'val', 'test'] if s in data
     ]
     test_split = [
         0 if s in ['train', 'val'] else 1 for s in ['train', 'val', 'test'] if s in data

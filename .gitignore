@@ -3,4 +3,7 @@
 .vscode/
 runs/
 test_logging/
+test_wandb/
 mp/
+wandb/
+*.log
