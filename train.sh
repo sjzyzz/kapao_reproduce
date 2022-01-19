@@ -1,1 +1,1 @@
-python -m torch.distributed.run --nproc_per_node=4 tools/train.py --batch-size 24 --data data/coco-kp.yaml --weights ./yolov5s6.pt --resume
+python -m torch.distributed.run --nproc_per_node=4 tools/train.py --batch-size 24 --data data/coco-kp.yaml --weights ./yolov5s6.pt

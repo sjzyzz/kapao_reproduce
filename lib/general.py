@@ -1,6 +1,7 @@
 import math
 import os.path as osp
 from pathlib import Path
+from sys import path_hooks
 import time
 import logging
 import random
@@ -266,3 +267,25 @@ def get_latest_run(search_dir='.'):
     """
     last_list = glob.glob(f'{search_dir}/**/last*.pt', recursive=True)
     return max(last_list, key=osp.getctime) if last_list else ''
+
+def check_file(file):
+    """
+    Search file and return path
+    """
+    file = str(file)
+    if Path(file).is_file or file == '':
+        return file
+    elif file.startswith(('http:/', 'https:/')):
+        pass
+    else:
+        # search
+        files = glob.glob('./**/' + file, recursive=True)
+        assert len(files), f'File not found: {file}'
+        assert len(files) == 1, f"Multiple files match '{file}', specify exact path: {files}"
+        return files[0]
+
+def methods(instance):
+    """
+    Get class/instance methods
+    """
+    return [f for f in dir(instance) if callable(getattr(instance, f)) and not f.startswith("__")]
